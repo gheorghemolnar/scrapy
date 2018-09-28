@@ -1,0 +1,155 @@
+# -*- coding: utf-8 -*-
+import scrapy
+import json
+import logging
+from scrapy.linkextractors import LinkExtractor
+from scrapy.spiders import Rule, CrawlSpider
+from scrapy.utils.response import get_base_url
+
+#
+# CMD > scrapy crawl -o scrapy.json sitespider 2> scrapy.log
+#
+class SITESpider(scrapy.Spider):
+	name = "sitespider"
+	
+	custom_settings = {
+        'LOG_LEVEL': 'DEBUG',
+        'COOKIES_DEBUG': False,
+        'HTTPCACHE_ENABLED': False,
+        'DEFAULT_REQUEST_HEADERS': {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.2743.82 Safari/537.36',
+        }
+	}
+
+	start_urls = ['URL_LIST']
+
+	# Method for parsing items
+	def parse(self, response):
+		#links = response.xpath('//div[@id="collection-js"]/div[contains(@class,"related-items-block")]//a/@href').extract()
+		items = response.xpath('//div[@id="collection-js"]/div[contains(@class,"related-items-block")]')
+		for item in items:
+			link = item.xpath('./div/a/@href').extract_first()
+			gps = item.xpath('./div/div[@class="infos"]//a[contains(@class,"btn-go")]/@ng-click').extract_first()
+			gps = None if gps is None else gps.replace("openGoogleMaps(", "").replace(")", "")
+			gps = None if gps is None else gps.split(",")
+			lat = "" if gps is None else gps[0].replace("'","").strip()
+			lon = "" if gps is None else gps[1].replace("'","").strip()
+			yield scrapy.Request(url=link, meta={'lat': lat, 'lon': lon},callback=self.parse_details)
+
+		#multiples pages for results possible
+		nextPage = response.xpath('//ul[@class="pagination"]//li/a[@rel="next"][contains(text(),"Suivante")]/@href').extract_first()
+		if (not nextPage is None):
+			nextPage=response.urljoin(nextPage)
+			self.logger.info (">>>> PARSE NEXT PAGE  " + nextPage)
+			yield scrapy.Request(url=nextPage, callback=self.parse)
+
+	def parse_details(self, response):
+		#2018/07/01 
+		#desc = response.xpath('//div[@id="menu01"]/div[contains(@class,"p0 m0")]/p[contains(@class,"mb10")]/text()').extract_first()
+		desc = response.xpath('//div[contains(@class,"block-resto")]//p[contains(@class,"justify")]/text()').extract_first()
+		desc = "" if desc is None else desc
+		#titre = response.xpath('//div/h2[@id="sponsors"]/text()').extract()
+		titre = response.xpath('//div[contains(@class,"site-header")]/div[contains(@class,"container")]//h1[contains(@class,"site-name")]/text()').extract()
+		titre = "" if titre is None else "".join(titre).strip()
+		note = response.xpath('//div/h2[@id="sponsors"]/span/text()').extract()
+		note = "" if note is None else "".join(note).strip()
+		
+		toque = response.xpath('//div/h2[@id="sponsors"]//span[contains(@class,"toque-rating-inline")]/@class').extract_first()
+		toque = "" if toque is None else toque.replace("toque-rating-inline","").replace("is-light","").replace("toque-","").strip()
+		toque = "0" if toque is "" else toque 
+
+		#OLD
+		#chef = response.xpath('//div[@id="menu03"]/div[contains(@class,"row")]/div[contains(@class,"card")]//h3/text()').extract()
+		chef = response.xpath('//div[contains(@class,"block-resto")]/div[contains(@class,"row")]/div[contains(@class,"card")]//h3[contains(@class,"h4")]/text()').extract()
+		chef = "" if chef is None else "".join(chef).strip()
+		
+		adresseTmp = response.xpath('//div/ul[@class="info-block"]/li[contains(@class,"info address")]/text()').extract()
+		adresseTmp = "" if adresseTmp is None else "".join(adresseTmp).strip()
+		adresseTmp = "" if adresseTmp is None else adresseTmp.split("\n")
+		adresseTmp = "" if adresseTmp is None else [elem for elem in adresseTmp if elem.strip() != ""]
+		adresse= "" if adresseTmp is None else adresseTmp[len(adresseTmp)-2]
+		adresse= "" if adresse is None else adresse.strip()
+
+		cp = "" if adresseTmp is None else adresseTmp[len(adresseTmp)-1]
+		cp = "" if cp is None else cp.strip()[0:5]
+		tel = response.xpath('//div/ul[@class="info-block"]/li[@class="info phone"]/a/text()').extract()
+		tel = "" if tel is None else "".join(tel).strip()
+
+		pop = response.xpath('//div[contains(@class,"establishment-header")]/div[contains(@class,"container")]//h1[contains(@class,"establishment-name")]/span[contains(@class,"icon-logo-pop")]').extract()
+		pop = set() if (len (pop) == 0) else set(['Pop'])
+
+		#Service
+		service = response.xpath('//h2[contains(text(),"Plus d\'infos")]/../ul/li[contains(@class,"icon-service")]/following-sibling::li/a/text()').extract()
+		service = set() if service is None else set(service)
+		service = service | pop
+		
+		#Moment
+		moment = response.xpath('//h2[contains(text(),"Plus d\'infos")]/../ul/li[contains(@class,"icon-moment")]/following-sibling::li/a/text()').extract()
+		moment = set() if moment is None else set(moment)
+		
+		
+		#Cuisine + Service
+		#type = response.xpath('//h2[contains(text(),"Plus d\'infos")]/../ul/li[contains(@class,"icon-cuisine")]/following-sibling::li/a/text()').extract()
+		type = response.xpath('//div[contains(@class,"affixed-hidden")]/a/text()').extract()
+		
+		type = set() if type is None else set(type)
+		#type = (type - service - moment)
+
+
+		#Ambiance + Cuisine + Service
+		#tags = response.xpath('//h2[contains(text(),"Plus d\'infos")]/../ul/li[contains(@class,"icon-category")]/following-sibling::li/a/text()').extract()
+		tags = response.xpath('//ul/li[contains(@class,"id-buttons")]/a/text()').extract()
+		tags = set() if tags is None else set(tags)
+		
+		tags = (tags - type)
+
+		service = (service | tags)
+
+		service	= "" if service	is None else ",".join(service).strip()
+		type	= "" if type	is None else ",".join(type).strip()
+		tags	= "" if tags	is None else ",".join(tags).strip()
+
+		
+		metro = response.xpath('//div/ul[@class="info-block"]/li[@class="info transport"]/text()').extract()
+		metro = "" if metro is None else "".join(metro).strip()
+		prix = response.xpath('//div/ul[@class="info-block"]/li[@class="info price-range"]/p/text()').extract()
+		prix = "" if prix is None else "".join(prix).strip().replace(",",".")
+		#site = response.xpath('//div[@class="cta-block"]/a[text()="Site web"]/@href').extract_first()
+		site = response.xpath('//a[text()="Site web"]/@href').extract_first()
+		site = "" if site is None else site.strip()
+		menu = "" if site is "" else site
+
+		dataTmp = response.xpath('//script[@type="application/ld+json"]/text()').extract_first()
+		dataTmp = None if dataTmp is None else dataTmp
+		dataTmp = "" if dataTmp is None else dataTmp[dataTmp.find('\"datePublished\"'):(dataTmp.find('\"datePublished\"')+len('\"datePublished\"')+13)]
+		dataTmp = "" if dataTmp is None else dataTmp.replace('\"datePublished\": \"',"").replace("-","/").strip()
+		
+		datecreation = "" if dataTmp is None else dataTmp
+		
+		lat	= response.meta["lat"]
+		lon	= response.meta["lon"]
+		
+		note = response.xpath('//div[contains(@class,"tag_rating")]/div[contains(@class,"mt15")]/text()').extract_first()
+		
+		yield {
+			'url': response.url,
+			'titre': titre,
+			'desc': desc,
+			'toque': toque,
+			'note': note,
+			'chef': chef,
+			'adresse': adresse,
+			'cp': cp,
+			'lat': lat,
+			'lon': lon,
+			'tel': tel,
+			'type':	type,
+			'metro': metro,
+			'toque': toque,
+			'prix': prix,
+			'site': site,
+			'service': service,
+			'tags': tags,
+			'date': datecreation,
+			'note': note
+		}
