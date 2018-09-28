@@ -1,0 +1,94 @@
+# -*- coding: utf-8 -*-
+import scrapy
+import os
+import json
+
+# Prend une liste des entrées: et genère un .json en sortie
+#
+# CMD > scrapy crawl get_data_image
+#
+class GetImageSpider(scrapy.Spider):
+	name = "getImage-image"
+	start_urls = []
+
+	CST_DATA = 'entry_data'
+	CST_TAG_LOCATION = 'LocationsPage'
+	CST_TAG_PROFILE = 'ProfilePage'
+	CST_TAG_TAG = 'TagPage'
+
+	CST_OUTPUTDIR = "OUTPUT_DIR
+	CST_URL_BASE = "https://www.SITE_TO_PARSEcom/"
+	CST_TAG_GRAPH = "graphql"
+	CST_FILE_SUFFIX = "-0.json"
+		
+	custom_settings = {
+        'LOG_LEVEL': 'DEBUG',
+        'COOKIES_DEBUG': True,
+        'DOWNLOAD_DELAY': 2,
+        'CONCURRENT_REQUESTS': 5,
+        'CONCURRENT_REQUESTS_PER_DOMAIN': 10,
+        'DOWNLOAD_TIMEOUT': 30,
+        'DEFAULT_REQUEST_HEADERS': {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.2743.82 Safari/537.36',
+        }
+	}
+
+	def start_requests(self):
+
+		if not os.path.exists(self.CST_OUTPUTDIR):
+			os.makedirs (self.CST_OUTPUTDIR)
+		
+		urls= [ "LISTE_URSL_TO_PARSE"]
+
+		for x in urls:
+			id=x.partition('::')[0]
+			address = x.partition('::')[2]
+			yield scrapy.Request(address, meta={'id': id},callback=self.parse)
+
+	def parse(self, response):
+		body	 = response.text
+		tmpVal	 = body.rpartition("window._sharedData =")
+		jsonTmp  = "" + tmpVal[2]
+		jsonTmp	 = jsonTmp.partition("};")
+		jsonTxt	 = jsonTmp[0] + "}"
+		
+		basepath = response.url.replace(self.CST_URL_BASE,"")
+		basepath = basepath if basepath[-1] !='/' else basepath[0:len(basepath)-1]
+		levels = basepath.split('/')
+		filename = basepath
+		print (basepath+ "  " +str(len(levels)))
+
+		if len(levels) == 1:
+			filename = "/" + levels[0]
+			dir = self.CST_OUTPUTDIR
+		else:
+			filename = "/" + levels[-1]
+			dir = self.CST_OUTPUTDIR + "/" +  "/".join(levels[0:len(levels)-1])
+			if not os.path.exists (dir):			
+				os.makedirs(dir)
+
+		objJson  = json.loads(jsonTxt)
+
+		
+		jsonOut0 = objJson[self.CST_DATA]
+		if self.CST_TAG_PROFILE in jsonOut0:
+			jsonOut1 = jsonOut0[self.CST_TAG_PROFILE]
+		elif self.CST_TAG_LOCATION in jsonOut0:
+			jsonOut1 = jsonOut0[self.CST_TAG_LOCATION]
+		elif self.CST_TAG_TAG in jsonOut0:
+			jsonOut1 = jsonOut0[self.CST_TAG_TAG]
+		else:
+			f=open(self.CST_OUTPUTDIR + filename+self.CST_FILE_SUFFIX,'w')
+			f.write(jsonTxt)
+			f.close()
+		
+		jsonOut2 = jsonOut1[0]
+		jsonOut3 = jsonOut2[self.CST_TAG_GRAPH]
+		jsonOut  = {}
+		jsonOut[self.CST_TAG_GRAPH] = jsonOut3
+		jsonOut = json.dumps (jsonOut)
+
+
+		f=open(dir + filename+".json",'w')
+		f.write(jsonOut)
+		f.close()
